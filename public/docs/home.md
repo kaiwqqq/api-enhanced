@@ -75,6 +75,8 @@ npx @neteaseapireborn/api@latest
 
 v4.0.8 加入了 Vercel 配置文件,可以直接在 Vercel 下部署了,不需要自己的服务器(访问 Vercel 部署的接口,需要额外加一个 realIP 参数,如 `/song/url?id=1969519579&realIP=116.25.146.177`)
 
+v4.29.9 加入了生成随机中国 IP 功能, 在请求时加上 `randomCNIP=true` 即可使用随机中国 IP, 如 `/song/url?id=1969519579&randomCNIP=true`
+
 不能正常访问的,绑定下国内备案过的域名,之后即可正常访问
 
 ### 操作方法
@@ -162,9 +164,7 @@ banner({ type: 0 }).then((res) => {
 })
 ```
 
-## Docker 容器运行 (原版 API, 不推荐)
-
-> 注意: 该部分为**原版网易云音乐 API**的 Docker 容器部署方式, 关于增强版本请**自行构建并部署**
+## Docker 容器运行
 
 > 注意: 在 docker 中运行的时候, 由于使用了 request 来发请求, 所以会检查几个 proxy 相关的环境变量(如下所列), 这些环境变量 会影响到 request 的代理, 详情请参考[request 的文档](https://github.com/request/request#proxies), 如果这些环境变量 指向的代理不可用, 那么就会造成错误, 所以在使用 docker 的时候一定要注意这些环境变量. 不过, 要是你在 query 中加上了 proxy 参数, 那么环境变量会被覆盖, 就会用你通过 proxy 参数提供的代理了.
 
@@ -178,20 +178,20 @@ request 相关的环境变量
 6. NO_PROXY
 
 ```shell
-docker pull binaryify/netease_cloud_music_api
+docker pull moefurina/ncm-api
 
-docker run -d -p 3000:3000 --name netease_cloud_music_api    binaryify/netease_cloud_music_api
+docker run -d -p 3000:3000 --name ncm-api-enhanced moefurina/ncm-api
 
 
 // 或者
-docker run -d -p 3000:3000 binaryify/netease_cloud_music_api
+docker run -d -p 3000:3000 moefurina/ncm-api
 
 // 去掉或者设置相关的环境变量
 
-docker run -d -p 3000:3000 --name netease_cloud_music_api -e http_proxy= -e https_proxy= -e no_proxy= -e HTTP_PROXY= -e HTTPS_PROXY= -e NO_PROXY= binaryify/netease_cloud_music_api
+docker run -d -p 3000:3000 --name ncm-api-enhanced -e http_proxy= -e https_proxy= -e no_proxy= -e HTTP_PROXY= -e HTTPS_PROXY= -e NO_PROXY= moefurina/ncm-api
 
 // 或者
-docker run -d -p 3000:3000 -e http_proxy= -e https_proxy= -e no_proxy= -e HTTP_PROXY= -e HTTPS_PROXY= -e NO_PROXY= binaryify/netease_cloud_music_api
+docker run -d -p 3000:3000 -e http_proxy= -e https_proxy= -e no_proxy= -e HTTP_PROXY= -e HTTPS_PROXY= -e NO_PROXY= moefurina/ncm-api
 ```
 
 ### 自行构建 docker 镜像 (推荐)
@@ -232,6 +232,8 @@ $ sudo docker run -d -p 3000:3000 netease-music-api
 !> 由于网易限制,此项目在国外服务器或部分国内云服务上使用会受到限制,如 `460 cheating异常`,如需解决 , 可使用`realIP`参数,传进国内 IP 解决,如:`?realIP=116.25.146.177`
 即可解决
 
+!> 接上, v4.29.9 加入了生成随机中国 IP 功能, 在请求时加上 `randomCNIP=true` 即可使用随机中国 IP, 如 `/song/url?id=1969519579&randomCNIP=true`
+
 !> 图片加上 `?param=宽y高` 可控制图片尺寸，如 `http://p4.music.126.net/JzNK4a5PjjPIXAgVlqEc5Q==/109951164154280311.jpg?param=200y200`, `http://p4.music.126.net/JzNK4a5PjjPIXAgVlqEc5Q==/109951164154280311.jpg?param=50y50`
 
 !> 分页接口返回字段里有`more`,more 为 true 则为有下一页
@@ -248,9 +250,9 @@ $ sudo docker run -d -p 3000:3000 netease-music-api
 
 !> ~~因网易增加了网易云盾验证,密码登录暂时不要使用,尽量使用短信验证码登录和二维码登录,否则调用某些接口会触发需要验证的错误~~
 
-!> ~~二开作者注: 现在网易云云盾验证再次升级, 导致现在短信验证码也没法用了~~
+!> ~~二开作者再注: 现在二维码登录也无法使用了, 网易云官方最近查的太严了, 现在尝试调用会提示环境异常, 如果各位有绕过的方法请一定开`Pull Request`~~
 
-!> 二开作者再注: 现在二维码登录也无法使用了, 网易云官方最近查的太严了, 现在尝试调用会提示环境异常, 如果各位有绕过的方法请一定开`Pull Request`
+!> 二开作者注: 二维码登录现在是修复了, 但是密码登录和短信登录还是不行, 如果各位有绕过的方法请一定开`Pull Request`
 
 #### 1. 手机登录
 
@@ -1364,7 +1366,7 @@ tags: 歌单标签
 
 说明 : 调用此接口 , 传入类型和歌单 id 可收藏歌单或者取消收藏歌单
 
-!> 警告: 在`v4.25.0`版本后, 在网易云登陆后请求不要带上`cookie`字段, 会导致请求不合法
+!> 警告: 在`v4.29.7`版本后, 在网易云登陆后请求要带上`timestamp`字段, 否则会导致请求不合法
 
 **必选参数 :**
 
@@ -1395,7 +1397,7 @@ tags: 歌单标签
 
 说明 : 调用此接口 , 可以添加歌曲到歌单或者从歌单删除某首歌曲 ( 需要登录 )
 
-!> 警告: 在`v4.25.0`版本后, 在网易云登陆后请求不要带上`cookie`字段, 会导致请求不合法
+!> 警告: 在`v4.29.7`版本后, 在网易云登陆后请求要带上`timestamp`字段, 否则会导致请求不合法
 
 **必选参数 :**
 
