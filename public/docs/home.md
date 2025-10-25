@@ -59,13 +59,13 @@ $ set HOST=127.0.0.1 && node app.js
 支持 npx 方式运行,会自动安装依赖和运行
 
 ```
-npx @neteaseapireborn/api@版本号
+npx @neteasecloudmusicapienhanced/api@版本号
 ```
 
 或者运行
 
 ```
-npx @neteaseapireborn/api@latest
+npx @neteasecloudmusicapienhanced/api@latest
 
 ```
 
@@ -74,6 +74,8 @@ npx @neteaseapireborn/api@latest
 ## Vercel 部署
 
 v4.0.8 加入了 Vercel 配置文件,可以直接在 Vercel 下部署了,不需要自己的服务器(访问 Vercel 部署的接口,需要额外加一个 realIP 参数,如 `/song/url?id=1969519579&realIP=116.25.146.177`)
+
+v4.29.9 加入了生成随机中国 IP 功能, 在请求时加上 `randomCNIP=true` 即可使用随机中国 IP, 如 `/song/url?id=1969519579&randomCNIP=true`
 
 不能正常访问的,绑定下国内备案过的域名,之后即可正常访问
 
@@ -133,7 +135,10 @@ v3.3.0 后支持使用 PAC 代理,如 `?proxy=http://192.168.0.1/proxy.pac`
 v3.31.0 后支持 Node.js 调用,导入的方法为`module`内的文件名,返回内容包含`status`和`body`,`status`为状态码,`body`为请求返回内容,参考`module_example` 文件夹下的 `test.js`
 
 ```js
-const { login_cellphone, user_cloud } = require('@neteaseapireborn/api')
+const {
+  login_cellphone,
+  user_cloud,
+} = require('@neteasecloudmusicapienhanced/api')
 async function main() {
   try {
     const result = await login_cellphone({
@@ -156,15 +161,13 @@ main()
 
 ```ts
 // test.ts
-import { banner } from '@neteaseapireborn/api'
+import { banner } from '@neteasecloudmusicapienhanced/api'
 banner({ type: 0 }).then((res) => {
   console.log(res)
 })
 ```
 
-## Docker 容器运行 (原版 API, 不推荐)
-
-> 注意: 该部分为**原版网易云音乐 API**的 Docker 容器部署方式, 关于增强版本请**自行构建并部署**
+## Docker 容器运行
 
 > 注意: 在 docker 中运行的时候, 由于使用了 request 来发请求, 所以会检查几个 proxy 相关的环境变量(如下所列), 这些环境变量 会影响到 request 的代理, 详情请参考[request 的文档](https://github.com/request/request#proxies), 如果这些环境变量 指向的代理不可用, 那么就会造成错误, 所以在使用 docker 的时候一定要注意这些环境变量. 不过, 要是你在 query 中加上了 proxy 参数, 那么环境变量会被覆盖, 就会用你通过 proxy 参数提供的代理了.
 
@@ -178,20 +181,20 @@ request 相关的环境变量
 6. NO_PROXY
 
 ```shell
-docker pull binaryify/netease_cloud_music_api
+docker pull moefurina/ncm-api
 
-docker run -d -p 3000:3000 --name netease_cloud_music_api    binaryify/netease_cloud_music_api
+docker run -d -p 3000:3000 --name ncm-api-enhanced moefurina/ncm-api
 
 
 // 或者
-docker run -d -p 3000:3000 binaryify/netease_cloud_music_api
+docker run -d -p 3000:3000 moefurina/ncm-api
 
 // 去掉或者设置相关的环境变量
 
-docker run -d -p 3000:3000 --name netease_cloud_music_api -e http_proxy= -e https_proxy= -e no_proxy= -e HTTP_PROXY= -e HTTPS_PROXY= -e NO_PROXY= binaryify/netease_cloud_music_api
+docker run -d -p 3000:3000 --name ncm-api-enhanced -e http_proxy= -e https_proxy= -e no_proxy= -e HTTP_PROXY= -e HTTPS_PROXY= -e NO_PROXY= moefurina/ncm-api
 
 // 或者
-docker run -d -p 3000:3000 -e http_proxy= -e https_proxy= -e no_proxy= -e HTTP_PROXY= -e HTTPS_PROXY= -e NO_PROXY= binaryify/netease_cloud_music_api
+docker run -d -p 3000:3000 -e http_proxy= -e https_proxy= -e no_proxy= -e HTTP_PROXY= -e HTTPS_PROXY= -e NO_PROXY= moefurina/ncm-api
 ```
 
 ### 自行构建 docker 镜像 (推荐)
@@ -232,6 +235,8 @@ $ sudo docker run -d -p 3000:3000 netease-music-api
 !> 由于网易限制,此项目在国外服务器或部分国内云服务上使用会受到限制,如 `460 cheating异常`,如需解决 , 可使用`realIP`参数,传进国内 IP 解决,如:`?realIP=116.25.146.177`
 即可解决
 
+!> 接上, v4.29.9 加入了生成随机中国 IP 功能, 在请求时加上 `randomCNIP=true` 即可使用随机中国 IP, 如 `/song/url?id=1969519579&randomCNIP=true`
+
 !> 图片加上 `?param=宽y高` 可控制图片尺寸，如 `http://p4.music.126.net/JzNK4a5PjjPIXAgVlqEc5Q==/109951164154280311.jpg?param=200y200`, `http://p4.music.126.net/JzNK4a5PjjPIXAgVlqEc5Q==/109951164154280311.jpg?param=50y50`
 
 !> 分页接口返回字段里有`more`,more 为 true 则为有下一页
@@ -248,9 +253,9 @@ $ sudo docker run -d -p 3000:3000 netease-music-api
 
 !> ~~因网易增加了网易云盾验证,密码登录暂时不要使用,尽量使用短信验证码登录和二维码登录,否则调用某些接口会触发需要验证的错误~~
 
-!> ~~二开作者注: 现在网易云云盾验证再次升级, 导致现在短信验证码也没法用了~~
+!> ~~二开作者再注: 现在二维码登录也无法使用了, 网易云官方最近查的太严了, 现在尝试调用会提示环境异常, 如果各位有绕过的方法请一定开`Pull Request`~~
 
-!> 二开作者再注: 现在二维码登录也无法使用了, 网易云官方最近查的太严了, 现在尝试调用会提示环境异常, 如果各位有绕过的方法请一定开`Pull Request`
+!> 二开作者注: 二维码登录现在是修复了, 但是密码登录和短信登录还是不行, 如果各位有绕过的方法请一定开`Pull Request`
 
 #### 1. 手机登录
 
@@ -1364,7 +1369,7 @@ tags: 歌单标签
 
 说明 : 调用此接口 , 传入类型和歌单 id 可收藏歌单或者取消收藏歌单
 
-!> 警告: 在`v4.25.0`版本后, 在网易云登陆后请求不要带上`cookie`字段, 会导致请求不合法
+!> 警告: 在`v4.29.7`版本后, 在网易云登陆后请求要带上`timestamp`字段, 否则会导致请求不合法
 
 **必选参数 :**
 
@@ -1395,7 +1400,7 @@ tags: 歌单标签
 
 说明 : 调用此接口 , 可以添加歌曲到歌单或者从歌单删除某首歌曲 ( 需要登录 )
 
-!> 警告: 在`v4.25.0`版本后, 在网易云登陆后请求不要带上`cookie`字段, 会导致请求不合法
+!> 警告: 在`v4.29.7`版本后, 在网易云登陆后请求要带上`timestamp`字段, 否则会导致请求不合法
 
 **必选参数 :**
 
@@ -3987,7 +3992,6 @@ ONLINE 已发布
 **可选参数**
 
 - 状态（非必填）：
-
   - `displayStatus: null`（默认）：返回所有状态的声音
   - `displayStatus: "ONLINE"`：已发布的声音
   - `displayStatus: "AUDITING"`：审核中的声音
@@ -4000,19 +4004,16 @@ ONLINE 已发布
 - `limit: 20`：每次返回的声音数量（最多 200 个）
 
 - 搜索关键词：
-
   - `name: null`：返回所有的声音
   - `name: [关键词]`：返回包含指定关键词的声音文件
 
 - `offset: 0`：偏移量，用于分页，默认为 0，表示从第一个声音开始获取
 
 - 博客：
-
   - `radioId: null`：返回所有电台的声音
   - `radioId: [播客id]`：返回特定播客的声音
 
 - 是否公开：
-
   - `type: null`：返回所有类型的声音
   - `type: "PUBLIC"`：返回公开的声音
   - `type: "PRIVATE"`：返回隐私的声音

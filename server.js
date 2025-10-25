@@ -99,7 +99,7 @@ async function getModulesDefinitions(
  */
 async function checkVersion() {
   return new Promise((resolve) => {
-    exec('npm info NeteaseCloudMusicApi version', (err, stdout) => {
+    exec('npm info NeteaseCloudMusicApiEnhanced version', (err, stdout) => {
       if (!err) {
         let version = stdout.trim()
 
@@ -208,7 +208,9 @@ async function consturctServer(moduleDefs) {
     // Register the route.
     app.use(moduleDef.route, async (req, res) => {
       ;[req.query, req.body].forEach((item) => {
-        if (typeof item.cookie === 'string') {
+        // item may be undefined (some environments / middlewares).
+        // Guard access to avoid "Cannot read properties of undefined (reading 'cookie')".
+        if (item && typeof item.cookie === 'string') {
           item.cookie = cookieToJson(decode(item.cookie))
         }
       })
@@ -336,17 +338,17 @@ async function serveNcmApi(options) {
   const appExt = app
   appExt.server = app.listen(port, host, () => {
     console.log(`
-   _   _  _____ __  __           _    ____ ___ 
-  | \\ | |/ ____|  \\/  |     /\\   | |  |  _ \\_ |
-  |  \\| | |    | \\  / |    /  \\  | |  | |_) | |
-  | . \` | |    | |\\/| |   / /\\ \\ | |  |  __/| |
-  | |\\  | |____| |  | |  / ____ \\| |__| |   | |
-  |_| \\_|\\_____|_|  |_| /_/    \\_\\____|_|   |_|
+   _   _  _____ __  __  
+  | \\ | |/ ____|  \\/  |
+  |  \\| | |    | \\  / |
+  | . \` | |    | |\\/| |
+  | |\\  | |____| |  | | 
+  |_| \\_|\\_____|_|  |_|
     `)
     console.log(`
     ╔═╗╔═╗╦    ╔═╗╔╗╔╦ ╦╔═╗╔╗╔╔═╗╔═╗╔╦╗
     ╠═╣╠═╝║    ║╣ ║║║╠═╣╠═╣║║║║  ║╣  ║║
-    ╩ ╩╩  ╩═╝  ╚═╝╝╚╝╩ ╩╩ ╩╝╚╝╚═╝╚═╝═╩╝
+    ╩ ╩╩  ╩    ╚═╝╝╚╝╩ ╩╩ ╩╝╚╝╚═╝╚═╝═╩╝
     `)
     logger.info(`
 - Server started successfully @ http://${host ? host : 'localhost'}:${port}
