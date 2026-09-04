@@ -2,6 +2,7 @@
 const encrypt = require('./crypto')
 const CryptoJS = require('crypto-js')
 const { default: axios } = require('axios')
+const logger = require('./logger')
 const { PacProxyAgent } = require('pac-proxy-agent')
 const http = require('http')
 const https = require('https')
@@ -16,13 +17,33 @@ const {
   generateRandomChineseIP,
 } = require('./index')
 const { URLSearchParams, URL } = require('url')
-const { APP_CONF } = require('../util/config.json')
+const { APP_CONF } = require('./config.json')
+const {
+  getToken: antiCheatTokenV2,
+} = require('../module/register_checktoken_v2')
+const {
+  getToken: antiCheatTokenV3,
+} = require('../module/register_checktoken_v3')
 
 // 预先读取匿名token并缓存
 const anonymous_token = fs.readFileSync(
   path.resolve(tmpPath, './anonymous_token'),
   'utf-8',
 )
+const xeapiPublicKeyPath = path.resolve(tmpPath, './xeapi_public_key')
+let xeapi_public_key = null
+const loadXeapiPublicKey = () => {
+  if (!xeapi_public_key && fs.existsSync(xeapiPublicKeyPath)) {
+    try {
+      xeapi_public_key = JSON.parse(
+        fs.readFileSync(xeapiPublicKeyPath, 'utf-8'),
+      )
+    } catch (error) {
+      console.log('[ERR]', error)
+    }
+  }
+  return xeapi_public_key
+}
 
 // 预先绑定常用函数和常量
 const floor = Math.floor
@@ -46,6 +67,9 @@ const WNMCID = (function () {
   }
   return `${randomString}.${now().toString()}.01.0`
 })()
+
+let NMTID = ''
+let NMTID_RETRIES_LEFT = 3
 
 // 预先定义osMap
 const osMap = {
@@ -73,6 +97,12 @@ const osMap = {
     osver: '16.2',
     channel: 'distribution',
   },
+  osx: {
+    os: 'osx',
+    appver: '3.1.10.5100',
+    osver: '15.5',
+    channel: 'netease',
+  },
 }
 
 // 预先定义userAgentMap
@@ -85,9 +115,9 @@ const userAgentMap = {
       'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/60.0.3112.90 Safari/537.36',
   },
   api: {
-    pc: 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Safari/537.36 Chrome/91.0.4472.164 NeteaseMusicDesktop/3.0.18.203152',
+    pc: 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Safari/537.36 Chrome/91.0.4472.164 NeteaseMusicDesktop/3.1.29.205117',
     android:
-      'NeteaseMusic/9.1.65.240927161425(9001065);Dalvik/2.1.0 (Linux; U; Android 14; 23013RK75C Build/UKQ1.230804.001)',
+      'NeteaseMusic/9.5.61.260802021928(9005061);Dalvik/2.1.0 (Linux; U; Android 12; HBN-AL00 Build/cd737a2.0)',
     iphone: 'NeteaseMusic 9.0.90/5038 (iPhone; iOS 16.2; zh_CN)',
   },
 }
@@ -95,16 +125,21 @@ const userAgentMap = {
 // 预先定义常量
 const DOMAIN = APP_CONF.domain
 const API_DOMAIN = APP_CONF.apiDomain
+const EAPI_DOMAIN = APP_CONF.eapiDomain
+const XEAPI_DOMAIN = APP_CONF.xeapiDomain
 const ENCRYPT_RESPONSE = APP_CONF.encryptResponse
 const SPECIAL_STATUS_CODES = new Set([201, 302, 400, 502, 800, 801, 802, 803])
 
+let xeapiSessionId = ''
+let xeapiSessionKey = ''
+
 // chooseUserAgent函数
 const chooseUserAgent = (crypto, uaType = 'pc') => {
-  return userAgentMap[crypto]?.[uaType] || ''
+  return (userAgentMap[crypto] && userAgentMap[crypto][uaType]) || ''
 }
 
 // cookie处理
-const processCookieObject = (cookie, uri) => {
+const processCookieObject = (cookie, crypto) => {
   const _ntes_nuid = CryptoJS.lib.WordArray.random(32).toString()
   const os = osMap[cookie.os] || osMap['pc']
 
@@ -123,8 +158,14 @@ const processCookieObject = (cookie, uri) => {
     appver: cookie.appver || os.appver,
   }
 
-  if (uri.indexOf('login') === -1) {
-    processedCookie['NMTID'] = CryptoJS.lib.WordArray.random(16).toString()
+  // 服务端下发条件为不带NMTID请求任意eapi加密方式接口
+  if (cookie.NMTID) {
+    processedCookie['NMTID'] = cookie.NMTID
+  } else if (NMTID) {
+    processedCookie['NMTID'] = NMTID
+  } else if (NMTID_RETRIES_LEFT <= 0 || crypto !== 'eapi') {
+    processedCookie['NMTID'] =
+      '00O' + CryptoJS.lib.WordArray.random(19).toString()
   }
 
   if (!processedCookie.MUSIC_U) {
@@ -152,15 +193,32 @@ const createHeaderCookie = (header) => {
 const generateRequestId = () => {
   return `${now()}_${floor(random() * 1000)
     .toString()
-    .padStart(4, "0")}`;
-
+    .padStart(4, '0')}`
 }
 
-const createRequest = (uri, data, options) => {
+const createRequest = async (uri, data, options) => {
+  let token = ''
+  switch (options.checkToken) {
+    case 'v2':
+      // 每次实时获取反作弊 token，不缓存
+      token = await antiCheatTokenV2()
+      break
+    case 'v3':
+      // 每次实时获取反作弊 token，不缓存
+      token = await antiCheatTokenV3()
+      break
+  }
+
   return new Promise((resolve, reject) => {
     // 变量声明和初始化
     const headers = options.headers ? { ...options.headers } : {}
     const ip = options.realIP || options.ip || ''
+
+    // 加密方式选择
+    let crypto = options.crypto
+    if (crypto === '') {
+      crypto = APP_CONF.encrypt ? 'eapi' : 'api'
+    }
 
     // IP头设置
     if (ip) {
@@ -174,29 +232,33 @@ const createRequest = (uri, data, options) => {
     }
 
     if (typeof cookie === 'object') {
-      cookie = processCookieObject(cookie, uri)
+      cookie = processCookieObject(cookie, crypto)
       headers['Cookie'] = cookieObjToString(cookie)
     }
     let url = ''
     let encryptData = ''
-    let crypto = options.crypto
     const csrfToken = cookie['__csrf'] || ''
-
-    // 加密方式选择
-    if (crypto === '') {
-      crypto = APP_CONF.encrypt ? 'eapi' : 'api'
-    }
 
     const answer = { status: 500, body: {}, cookie: [] }
 
+    data.e_r = toBoolean(
+      options.e_r !== undefined
+        ? options.e_r
+        : data.e_r !== undefined
+          ? data.e_r
+          : ENCRYPT_RESPONSE,
+    )
     // 根据加密方式处理
     switch (crypto) {
       case 'weapi':
-        headers['Referer'] = DOMAIN
+        headers['Referer'] = options.domain || DOMAIN
         headers['User-Agent'] = options.ua || chooseUserAgent('weapi')
         data.csrf_token = csrfToken
+        if (options.checkToken) {
+          headers['X-antiCheatToken'] = token
+        }
         encryptData = encrypt.weapi(data)
-        url = DOMAIN + '/weapi/' + uri.substr(5)
+        url = (options.domain || DOMAIN) + '/weapi/' + uri.substr(5)
         break
 
       case 'linuxapi':
@@ -204,10 +266,59 @@ const createRequest = (uri, data, options) => {
           options.ua || chooseUserAgent('linuxapi', 'linux')
         encryptData = encrypt.linuxapi({
           method: 'POST',
-          url: DOMAIN + uri,
+          url: (options.domain || DOMAIN) + uri,
           params: data,
         })
-        url = DOMAIN + '/api/linux/forward'
+        url = (options.domain || DOMAIN) + '/api/linux/forward'
+        break
+
+      case 'xeapi':
+        const xeapiPublicKey = loadXeapiPublicKey()
+        if (!xeapiPublicKey) {
+          throw new Error('xeapi public key is missing')
+        }
+        const xeapiOs = cookie.os === 'android' ? cookie.os : 'android'
+        const xeapiAppver =
+          cookie.os === 'android' && cookie.appver ? cookie.appver : '9.1.65'
+        const xeapiOsver =
+          cookie.os === 'android' && cookie.osver ? cookie.osver : '16'
+        const xeapiBuildver = cookie.buildver || now().toString().substr(0, 10)
+        headers['User-Agent'] = options.ua || chooseUserAgent('api', 'android')
+        headers['X-Client-Enc-State'] = 'ENCRYPTED'
+        headers['x-aeapi'] = true
+        headers['content-type'] =
+          'application/x-www-form-urlencoded;charset=utf-8'
+        headers['x-deviceid'] = cookie.deviceId
+        headers['x-os'] = xeapiOs
+        headers['x-osver'] = xeapiOsver
+        headers['x-appver'] = xeapiAppver
+        headers['x-sdeviceid'] = cookie.sDeviceId || cookie.deviceId
+        headers['x-buildver'] = xeapiBuildver
+        if (cookie.MUSIC_U) headers['x-music-u'] = cookie.MUSIC_U
+        if (options.checkToken) {
+          headers['X-antiCheatToken'] = token
+        }
+        const xeapiCookie = {
+          ...cookie,
+          os: xeapiOs,
+          osver: xeapiOsver,
+          appver: xeapiAppver,
+          buildver: xeapiBuildver,
+          deviceId: cookie.deviceId,
+          sDeviceId: cookie.sDeviceId || cookie.deviceId,
+        }
+        headers['Cookie'] = cookieObjToString(xeapiCookie)
+        url = (options.domain || XEAPI_DOMAIN) + '/xeapi/' + uri.substr(5)
+        encryptData = encrypt.xeapi(uri, data, {
+          ...options,
+          publicKeyState: xeapiPublicKey,
+          sessionId: xeapiSessionId,
+          sessionKey: xeapiSessionKey,
+          appver: xeapiAppver,
+          deviceId: cookie.deviceId,
+          os: xeapiOs,
+          uid: cookie.uid || cookie.userId || '',
+        })
         break
 
       case 'eapi':
@@ -225,31 +336,29 @@ const createRequest = (uri, data, options) => {
           __csrf: csrfToken,
           channel: cookie.channel,
           requestId: generateRequestId(),
-          ...(options.checkToken
-            ? { 'X-antiCheatToken': APP_CONF.checkToken }
-            : {}),
           // clientSign: APP_CONF.clientSign,
         }
 
         if (cookie.MUSIC_U) header['MUSIC_U'] = cookie.MUSIC_U
         if (cookie.MUSIC_A) header['MUSIC_A'] = cookie.MUSIC_A
+        if (options.checkToken) header['X-antiCheatToken'] = token
+        if (crypto === 'eapi' && cookie.NMTID) header['NMTID'] = cookie.NMTID
 
         headers['Cookie'] = createHeaderCookie(header)
-        headers['User-Agent'] = options.ua || chooseUserAgent('api', 'iphone')
+        headers['User-Agent'] =
+          options.ua ||
+          (cookie.os === 'osx'
+            ? 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+            : chooseUserAgent('api', 'iphone'))
 
         if (crypto === 'eapi') {
+          // headers['x-aeapi'] = true // 服务器会使用gzip压缩返回值
           data.header = header
-          data.e_r = toBoolean(
-            options.e_r !== undefined
-              ? options.e_r
-              : data.e_r !== undefined
-              ? data.e_r
-              : ENCRYPT_RESPONSE,
-          )
+
           encryptData = encrypt.eapi(uri, data)
-          url = API_DOMAIN + '/eapi/' + uri.substr(5)
+          url = (options.domain || EAPI_DOMAIN) + '/eapi/' + uri.substr(5)
         } else if (crypto === 'api') {
-          url = API_DOMAIN + uri
+          url = (options.domain || API_DOMAIN) + uri
           encryptData = data
         }
         break
@@ -258,7 +367,6 @@ const createRequest = (uri, data, options) => {
         console.log('[ERR]', 'Unknown Crypto:', crypto)
         break
     }
-    // console.log(url);
     // settings创建
     let settings = {
       method: 'POST',
@@ -269,8 +377,15 @@ const createRequest = (uri, data, options) => {
       httpsAgent: createHttpsAgent(),
     }
 
-    // e_r处理
-    if (data.e_r) {
+    // 自定义超时
+    if (options.timeout > 0) {
+      settings.timeout = options.timeout
+    }
+
+    // 使用返回值加密
+    const use_e_r = (crypto === 'eapi' || crypto === 'weapi') && data.e_r
+    const use_xeapi = crypto === 'xeapi'
+    if (use_e_r || use_xeapi) {
       settings.encoding = null
       settings.responseType = 'arraybuffer'
     }
@@ -313,14 +428,53 @@ const createRequest = (uri, data, options) => {
     axios(settings)
       .then((res) => {
         const body = res.data
-        answer.cookie = (res.headers['set-cookie'] || []).map((x) =>
-          x.replace(/\s*Domain=[^(;|$)]+;*/, ''),
-        )
+        const setCookies = res.headers['set-cookie'] || []
+
+        const cleanCookie = (x) => x.replace(/\s*Domain=[^(;|$)]+;*/, '')
+
+        // 仅对真正未携带 NMTID 的探测请求采集并消耗重试次数
+        if (
+          crypto === 'eapi' &&
+          !NMTID &&
+          NMTID_RETRIES_LEFT > 0 &&
+          !cookie.NMTID
+        ) {
+          NMTID_RETRIES_LEFT--
+          answer.cookie = setCookies.map((x) => {
+            const cleaned = cleanCookie(x)
+            const match = x.match(/(?:^|;\s*)NMTID=([^;]+)/)
+            if (match) {
+              //不需要处理竞争, 官方客户端真实操作
+              NMTID = match[1]
+            }
+            return cleaned
+          })
+        } else {
+          answer.cookie = setCookies.map(cleanCookie)
+        }
+
+        // debug: 统一注释块，需要时取消注释查看请求/返回的原始密文
+
+        // logger.debug(`[${crypto}]`, uri)
+        // logger.debug(`[${crypto}] encrypted data:`, JSON.stringify(encryptData))
+        // logger.debug(
+        //   `[RAW] [${crypto}]`,
+        //   use_xeapi
+        //     ? Buffer.from(body).toString('base64')
+        //     : body.toString('hex').toUpperCase(),
+        // )
 
         try {
-          if (crypto === 'eapi' && data.e_r) {
+          if (use_xeapi) {
+            if (res.headers['x-encr-ssid'] && res.headers['x-encr-sskey']) {
+              xeapiSessionId = res.headers['x-encr-ssid']
+              xeapiSessionKey = res.headers['x-encr-sskey']
+            }
+            answer.body = encrypt.xeapiResDecrypt(Buffer.from(body))
+          } else if (use_e_r) {
             answer.body = encrypt.eapiResDecrypt(
               body.toString('hex').toUpperCase(),
+              headers['x-aeapi'],
             )
           } else {
             answer.body =

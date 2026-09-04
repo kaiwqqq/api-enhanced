@@ -4,13 +4,14 @@ const host = global.host || 'http://localhost:3000'
 describe('测试获取歌曲是否正常', () => {
   it('歌曲的 url 不应该为空', (done) => {
     const qs = {
-      id: 1969519579,
-      br: 999000,
+      id: 2709812973,
+      level: 'exhigh',
+      //realip: '125.88.253.199',
       realIP: global.cnIp,
     }
 
     axios
-      .get(`${host}/song/url`, {
+      .get(`${host}/song/url/v1`, {
         params: qs,
       })
       .then(({ status, data }) => {

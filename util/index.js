@@ -1,27 +1,77 @@
-// 预先定义常量和函数引用
-const chinaIPPrefixes = [
-  '116.25',
-  '116.76',
-  '116.77',
-  '116.78',
-  '116.79',
-  '116.80',
-  '116.81',
-  '116.82',
-  '116.83',
-  '116.84',
-  '116.85',
-  '116.86',
-  '116.87',
-  '116.88',
-  '116.89',
-  '116.90',
-  '116.91',
-  '116.92',
-  '116.93',
-  '116.94',
-]
-const prefixesLength = chinaIPPrefixes.length
+const logger = require('./logger')
+const fs = require('fs')
+const path = require('path')
+
+// IP地址转换函数
+function ipToInt(ip) {
+  const parts = ip.split('.').map(Number)
+  const a = (parts[0] << 24) >>> 0
+  const b = parts[1] << 16
+  const c = parts[2] << 8
+  const d = parts[3]
+  return a + b + c + d
+}
+
+function intToIp(int) {
+  return [
+    (int >>> 24) & 0xff,
+    (int >>> 16) & 0xff,
+    (int >>> 8) & 0xff,
+    int & 0xff,
+  ].join('.')
+}
+
+// 解析CIDR格式的IP段
+function parseCIDR(cidr) {
+  const [ipStr, prefixLengthStr] = cidr.split('/')
+  const prefixLength = parseInt(prefixLengthStr, 10)
+
+  const ipInt = ipToInt(ipStr)
+  const mask = (0xffffffff << (32 - prefixLength)) >>> 0
+  const start = (ipInt & mask) >>> 0
+  const end = (start | (~mask >>> 0)) >>> 0
+  const count = end - start + 1
+
+  return { start, end, count, cidr }
+}
+
+// 从china_ip_ranges.txt加载中国IP段（CIDR格式）
+const chinaIPRanges = (function loadChinaIPRanges() {
+  try {
+    const filePath = path.join(__dirname, '../data/china_ip_ranges.txt')
+    const content = fs.readFileSync(filePath, 'utf-8')
+    const lines = content
+      .split('\n')
+      .filter((line) => line.trim() && !line.startsWith('#'))
+
+    const arr = []
+    let total = 0
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim()
+      if (!line) continue
+
+      const range = parseCIDR(line)
+      arr.push(range)
+      total += range.count
+    }
+
+    // 按IP段大小排序，提高随机选择效率
+    arr.sort((a, b) => b.count - a.count)
+
+    // attach total for convenience
+    arr.totalCount = total
+
+    // logger.info(
+    //   `Loaded ${arr.length} Chinese IP ranges from china_ip_ranges.txt, total ${total} IPs`,
+    // )
+    return arr
+  } catch (error) {
+    logger.error('Failed to load china_ip_ranges.txt:', error.message)
+    // 返回空数组，generateRandomChineseIP会使用兜底逻辑
+    return { totalCount: 0 }
+  }
+})()
 const floor = Math.floor
 const random = Math.random
 const keys = Object.keys
@@ -78,9 +128,36 @@ module.exports = {
   },
 
   generateRandomChineseIP() {
-    // 优化：使用预绑定的函数和常量
-    const randomPrefix = chinaIPPrefixes[floor(random() * prefixesLength)]
-    return `${randomPrefix}.${generateIPSegment()}.${generateIPSegment()}`
+    // 从预定义的中国 IP 段中按权重随机选择一个段，然后在该段内生成随机 IP
+    const total = chinaIPRanges.totalCount || 0
+    if (!total) {
+      // 兜底：回退到旧逻辑（随机 116.x 前缀）
+      const fallback = `116.${getRandomInt(25, 94)}.${generateIPSegment()}.${generateIPSegment()}`
+      logger.info('Generated Random Chinese IP (fallback):', fallback)
+      return fallback
+    }
+
+    // 选择一个全局随机偏移（[0, total)）
+    let offset = Math.floor(random() * total)
+    let chosen = null
+    for (let i = 0; i < chinaIPRanges.length; i++) {
+      const seg = chinaIPRanges[i]
+      if (offset < seg.count) {
+        chosen = seg
+        break
+      }
+      offset -= seg.count
+    }
+
+    // 如果没有选中（理论上不应该发生），回退到最后一个段
+    if (!chosen) chosen = chinaIPRanges[chinaIPRanges.length - 1]
+
+    // 在段内随机生成一个 IP（使用段真实的数值范围）
+    const segSize = chosen.end - chosen.start + 1
+    const ipInt = chosen.start + Math.floor(random() * segSize)
+    const ip = intToIp(ipInt)
+    logger.info('Generated Random Chinese IP:', ip, 'from CIDR:', chosen.cidr)
+    return ip
   },
   // 生成chainId的函数
   generateChainId(cookie) {
